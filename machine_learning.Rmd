@@ -1,0 +1,81 @@
+---
+title: "Activity Prediction"
+author: "Dan Hathway"
+date: "April 6, 2017"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(caret)
+library(rpart)
+library(randomForest)
+```
+```{r initiation}
+read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", na.strings=c("NA","#DIV/0!", "")) ->train
+read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", na.strings=c("NA","#DIV/0!", "")) ->test
+```
+## Build Model
+The following steps were used to build the model. The datasets were imported. After initial examination, the first 7 non-predictive columns were removed from both training and testing data.
+```{r preprocess}
+## remove x and following 6 non-predictive columns but save for test set
+train[,-c(1:7)] -> train
+test[,c(1:7)] -> savetestcols
+test[,-c(1:7)] -> test
+## find out which columns have more than 95% of data missing
+colSums(is.na(train)) ->badcols
+nrow(train) * 0.95 -> cutoff
+## remove them
+train[,badcols < cutoff] ->train
+test[,badcols < cutoff] ->test
+```
+Each remaining column in the initial training set was assessed according to whether at least 5% of its rows had data present. Columns failing that test were removed, leaving 53 variables.
+```{r initial split and analysis}
+## split training into sub-training / new testing on 60:40 ratio
+new_split <- createDataPartition(y=train$classe, p=0.60, list=FALSE)
+sub_train <- train[new_split, ] 
+sub_test <- train[-new_split, ]
+histogram(sub_train$classe,col=c("green","yellow","orange","red","black"),xlab="Actual Level")
+```
+The cleansed test data was split into a sub_training and sub_testing dataset on a 60:40 ratio. The sub_training data was analyed by classe. The chart shows the split.
+```{r preprocess sub training data}
+x <- preProcess(sub_train)
+x1 <- predict(x,sub_train)
+## zero/near zero variance tests
+nearZeroVar(x1,saveMetrics=TRUE) -> zvt
+sum(zvt$zeroVar)
+sum(zvt$nzv)
+## 
+```
+Preprocessing was perfomed to provide variance testing. It was shown that all 53 variables were valid model inputs.
+```{r model 1 generation}
+model1 <- rpart(classe ~ ., data=sub_train, method="class")
+predict1 <- predict(model1, sub_test, type = "class")
+cm <- confusionMatrix(predict1, sub_test$classe)
+cm$overall[1]
+plot(cm$table)
+```
+The rational for model selection is to try at least 2 different models, with the aim of at least 97.5% accuracy in a final model. The number of variables and fixed set of possible outcomes seem to suggest a tree method will work best.
+
+The first model generated was done using rpart, on the non-preprocessed input data. The results of prediction on the sub_test data showed 72% accuracy. A further model was required.
+```{r model 2 generation}
+model2 <- randomForest(classe ~ ., data=sub_train, method="class")
+predict2 <- predict(model2, sub_test)
+cm2 <- confusionMatrix(predict2, sub_test$classe)
+cm2$overall[1]
+plot(cm2$table)
+```
+The second model used randomForest. This created results with over 99% accuracy. No further modeling or any combination was thought to be required, but cross-validation using the cv method will be performed. An error rate of no greater than 2% is expected.
+```{r model 2a generation and application}
+## cross validate second model
+cp <-trainControl(method="cv",number=3)
+train (classe~.,data=sub_train,method="rf",trControl=cp) ->model2a
+## look at the model
+model2a$finalModel
+## apply model 2 to test data
+predict2a <-predict(model2a,test)
+cbind(classe=predict2a,savetestcols,test) -> testresults
+testresults
+```
+## Test Results
+The second model was applied to the original test set, and bound columnwise to respect the original format. This output is shown. The error rate is 0.85%
